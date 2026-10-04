@@ -214,7 +214,54 @@ songs = client.music_clients['NeteaseMusicClient'].search(
   resp = client.post('https://music.163.com/api/v6/playlist/detail', data={'id': pid})
   track_ids = (resp.json()['playlist']['trackIds'])             # 逐首 _parsewithofficialapiv1 解析
   ```
-- 逐首解析：`SongInfo(source='NeteaseMusicClient', raw_data={'search': tid, ...})` → `client._parsewithofficialapiv1(search_result=tid, lossless_quality_is_sufficient=False)`；`_parsewiththirdpartapis` 可省（官方直链够用）。
+- 逐首解析：`SongInfo(source='NeteaseMusicClient', raw_data={'search': tid, ...})` → `client._parsewithofficialapiv1(search_result=tid, song_info_flac=None, lossless_quality_is_sufficient=False)`；**必须只用官方 v1，禁止调 `_parsewiththirdpartapis`**（见下方警告）。
+- **歌手页（artist）入库**：网易云歌手页 `music.163.com/#/artist?id=XXXX` 用 `client.post('https://music.163.com/api/v1/artist/{id}')` 直接拿 `hotSongs`（已是完整 song detail，无需像歌单那样先 `trackIds` 展开），逐首 `_parsewithofficialapiv1` 即可。歌手署名以 `artist.name` 或每首 `ar[].name` 为准（注意一字之差：用户给的名 vs 网易云实际署名，如"杨西英子"实为"杨西音子"，按用户字面建卡并提示差异）。
+- ⚠️ **第三方解析链恶意域名（已踩坑，必看）**：`NeteaseMusicClient._parsewiththirdpartapis` 的 l1 解析链含 `self._parsewithbileizhenapi`，会访问 `api.bileizhen.top`——该域名被安全中心标记为 **ClearFake 黑灰产**，沙箱直接拒绝连接并 SIGTERM 整个脚本，导致入库中断、零落盘。即使某些歌能在第三方链提前拿到直链而 break，仍有部分歌会走到该域名被拦。**因此网易云入库一律只用 `_parsewithofficialapiv1`**（官方 `interface3.music.163.com`），预览实测 3/3 直链均为官方接口取得，足够。
+
+### 5.1.1 QQ 音乐专辑 / 歌手页入库（qq.py 无 album 接口，需手动拉）
+- `QQMusicClient` 只有 `search` / `parseplaylist`（歌单），**没有 album / artist 接口**。要入 QQ 专辑，先手动拉官方专辑 API：
+  ```python
+  qc = QQMusicClient()
+  resp = qc.get('https://c.y.qq.com/v8/fcg-bin/fcg_v8_album_info_cp.fcg',
+                params={'albummid': '001eHuw64QpXgs', 'platform': 'mac', 'format': 'json', 'newsong': '1'})
+  songlist = (resp.json().get('data') or {}).get('list') or []
+  # 每首项含 songmid / songname / singer[{name}] / albumname / interval(秒)
+  for t in songlist:
+      si = qc._parsewithofficialapiv1(search_result=t, song_info_flac=None, lossless_quality_is_sufficient=False)
+      # 官方 vkey 直链(多为 ogg); 同样禁止 _parsewiththirdpartapis(一堆乱源)
+  ```
+- QQ 官方 v1 走 `music.vkey.GetVkey`（域名 `u.y.qq.com` / `c.y.qq.com`），安全可用；第三方链（`_parsewiththirdpartapis`）含多个不明第三方直链源，不碰。
+- albummid 从专辑页 URL `y.qq.com/n/ryqq_v2/albumDetail/001eHuw64QpXgs` 的路径末段取；歌手页则用 `search` 搜歌手名再取 `songmid` 逐首解析（或直接搜该歌手的专辑 mid）。
+- QQ 与网易云 `identifier` 体系不同（QQ 是字母数字 mid，网易云是纯数字 id），跨源按 `(source, identifier)` 去重即可，不会误并。
+
+### 5.1.2 汉族库（GROUP_KEY='han'）的特殊处理（已踩坑）
+- 汉族民间小调库 **不在 `ETHNIC_BY_KEY`**（其它民族是 `eNN`，汉族是特殊键 `han`，文件名 `han_汉族民间小调.json`，`_cache_path` 对 `key=='han'` 特判返回该文件）。入库脚本 **不能写 `ETHNIC_BY_KEY['han']`**（KeyError）。
+- `_ethnos_payload(info, group_key, songs)` 内部只用 `info['name']`（拼 `name`/`group`）和 `info['kws']`（元数据）两字段，其余自动生成。汉族库入库时从**磁盘现有 payload** 取这俩构造 info：
+  ```python
+  _base = json.load(open(TARGETS[0], encoding='utf-8'))
+  info = {'name': _base.get('group') or (_base.get('name') or '').split(' · ')[0] or '汉族民间小调',
+          'kws': _base.get('kws') or []}
+  ```
+- **同名冲突红线**：汉族库主池可能已有大量 `singers=='西南'` 这类"地域分类标签"曲目（`singers_orig` 为空、非歌手，是建库按地域批量标的）。新建同名歌手卡片前**必须先查主池是否已有同名 `singers`**——否则"清掉同名卡→加新歌"模板会清空数百首主池地域标签。遇到同名：用 `AskUserQuestion` 让用户选（保留主池 / 替换主池 / 改名）；选"保留"时改模板为**不清卡、直接追加、新歌标 `singers_orig`=真实歌手**。
+- **DEV/LIVE 同步**：汉族库的 dev 副本与运行 App 实时数据（`~/Library/Application Support/MountainRiverEchoes/...`）偶尔不同步（如有人在 UI 手动建卡只写 live）。入库前先核对两份 `artists_added`/曲目数，把 live 多出部分无害同步回 dev，再双写，保证一致。
+
+### 5.1.3 大批量归类/归并到地域卡片（已踩坑，必看）
+- **噪声判定按歌手，不按标题**：标题含 `#话题` / `第X集` / `第X章` / `有声` 的**不一定**是噪声——`17 兰花花#陕北民歌`、`21 采茶灯#福建民歌`、`《拔根芦柴花》二胡同步有声动态简谱`、`安徽花鼓灯男班 第一节` 都是正经民歌，按标题删会大规模误伤（实测 37 首里误伤 27 首）。真正噪声看**歌手账号**：`喜马拉雅 / 小酷说书 / 狮子老爸 / 懒人听书 / 一路听天下 / 金林主播 / 润为有声 / XI_VOICES`。
+- **大批量改写前手动额外备份**：`_atomic_write_json` 会归档旧版到 `versions/`，但受 `VERSION_KEEP` 轮转限制，实测批量归并后**归并前那一版没留下**。改写上千首前先手动 `cp` 一份到安全处。
+- **单字关键词会误伤**：用省份简称单字（苏/浙/晋/冀/鲁/豫/京/津/闽/粤/湘/鄂/皖/赣/徽/吴/蜀/滇/黔/楚）做地域判定极危险——「**苏**」把「乌**苏**里船歌」（东北）判成江南共 9 首；「花儿」（西北曲种）把「四季**花儿**开」（实为湘鄂民歌）判成西北。优先用**双字以上具体词**。
+- **同曲名跟随 vs 省份强规则**：跨地域同曲名（茉莉花、回娘家、十二月望郎）有大量不同省份版本，仅靠"同曲名跟随"会把《回娘家(河北民歌)》拉到湘鄂。精度修正要用**强规则优先**：正则匹配 `省份 + (民歌|小调|山歌|号子|花儿|情歌|船歌)`（如"河北民歌"→华北）覆盖跟随结果；含 `+` 的串烧（兰花花+浏阳河+乌苏里船歌）跳过不判。
+- **归并流程模板**：① 备份 ② 剔除真噪声 ③ 关键词判定 ④ 同曲名迭代跟随（把命中曲名回灌映射再跑 1-2 轮） ⑤ 剩余按用户指定兜底卡 ⑥ 省份强规则精度修正 ⑦ 双写 + 校验"各卡之和 == 总数"且"非目标卡残留为空"。
+
+### 5.1.4 ⚠️ `_ethnos_payload` 会用 `_song.singers` 覆盖人工标签（最高危踩坑，已实际酿成回归）
+- **现象**：入库脚本习惯写成 `payload = mre._ethnos_payload(info, KEY, all_songs)`，其中 `all_songs = [SongInfo.fromdict(t['_song']) for t in existing] + new_songs`。重建时 track 的 `singers` **取自 `SongInfo.singers`（即 `_song` 里的真实歌手名）**，会**静默覆盖**此前人工设到 `track['singers']` 的卡片/地域标签。
+- **实际事故**：汉族库 8 卡大归并（2440 首全部贴好地域标签）后，再跑一次普通入库，`_ethnos_payload` 重建把归并结果**全部抹回真实歌手名**——西南 449→292、湘鄂 245→174、非 8 卡残留 0→561，归并工程白做。靠手动备份才救回。
+- **根因**：归并/贴标签只改了 `track['singers']`，**没改 `_song['singers']`**；一旦 payload 重建就从 `_song` 重新取值。
+- **正确做法（三选一，按安全性递增）**：
+  1. **最稳**：不整份重建——读现有 JSON，只在 `d['tracks']` 上 `append` 新 track，人工改元数据字段（count 等），**绝不调用 `_ethnos_payload` 重建已贴标签的库**。
+  2. 必须重建时，重建后**按 `identifier`/`(song_name, identifier)` 从备份映射逐条还原** `singers` / `singers_orig`（脚本见 `/tmp/fix_han_singers_restore.py`）。
+  3. 贴标签时**同步写 `_song['singers']`**，让重建也能取到卡名（会污染 `_song` 原始字段，慎用）。
+- **红线**：对**已做过归并/贴卡片的库**（尤其是汉族库 han 这种按地域贴过标签的）做追加入库前，**必须先手动 `cp` 备份**，且入库后立刻核对"各卡之和 == 总数"与"非目标卡残留 == 0"。
+
 
 ### 5.2 在民族库内建"歌手卡片"（正确位置，别写进全局"我的歌单"）
 - ⚠️ 民族库**内部**的卡片 = **歌手卡片**，由该族缓存文件 `webui/ethnos_cache/eXX_族.json` 里每条曲目的 **`singers` 字段**扫描聚合而成（见 3 节）。它出现在「民族库二级页 → 歌手目录」，**不在**左侧全局"我的歌单"。
@@ -227,6 +274,25 @@ songs = client.music_clients['NeteaseMusicClient'].search(
 - 回滚保护：改 `singers` 前把原歌手名存到 **`singers_orig`** 字段（UI 不读，纯备份），要恢复真实歌手时回填即可。
 - 索引按文件 mtime 签名刷新（`_ethnos_files_sig`），改盘后刷新网页即生效，**无需重启服务**。
 - 精度提示：进主池会稀释目标族精度（例：侗苗歌单全量入仡佬族池，0 首真仡佬）。如要"只留卡片、清主池"，回滚时把主池里 `source=NeteaseMusicClient` 的这批整删即可。
+
+### 5.3 微信文章/专辑入库（wx_video_album.py + 桥接 eXX）
+
+微信源已接入默认音源（`WeixinMusicClient`），但搜狗 fallback 常触发 `WeixinSogouBlocked` 限流、不可靠；正文直连有时返 `ret=-2` 验证页，需多试/换篇。解析用项目根 `wx_video_album.py`（直连 mp.weixin.qq.com，绕开 musicdl 标准 API）：
+- 单篇：`--url "https://mp.weixin.qq.com/s/xxx" --out one.json`
+- 合集：`--album-url "https://mp.weixin.qq.com/mp/appmsgalbum?__biz=Y&action=getalbum&album_id=Z" --out album.json`（自动拆 __biz+album_id，paging 翻页拿全）
+- 输出统一 schema 条目：`kind:'audio'`（mpvoice，含 `voice_id`=mediaid + `download_url`=getvoice 直链）/`kind:'video'`（mpvideo/qqvid，短效直链）
+
+⚠️ 踩坑：`parse_voices` 正则只认 `title="..."singer_name="..."` 结构，会漏掉大量用 `name="..."play_length="..."` 且无 title 的文章（如"羌族歌曲欣赏"系列，body 含 20 个 voice_encode_fileid 只抽到 5）；且微信内联 JSON 用 `\x22` 转义引号。→ 在桥接脚本里 **monkeypatch 健壮版 `parse_voices`**（`body.replace('\\x22','"').replace('\\x26','&')` 后匹配 `<mpvoice ...>` 标签取 voice_encode_fileid/name/play_length），**不动项目源码**即可多抽数倍音频。
+
+⚠️ 实战补充（2026-10-04 道真仡佬篇）：上面那版健壮 `parse_voices` 还要再扩三点，否则「道真公共文化」这类**新版音频卡片会 0 命中**（单篇 3.4MB 正文里 30 个 `voice_encode_fileid` 却抽不到）：
+  - 标签形态不止 `<mpvoice ...>`，还有 **`<mp-common-mpaudio ...>`**（2024+ 公众号"音频卡片"用这个），必须两种都 `re.finditer` 匹配；
+  - 真实歌名**不在 `name=` 属性**（新版里 `name="insertaudio"` 恒为插件类名，不是歌名），而是藏在 `src="/cgi-bin/readtemplate?t=tmpl/audio_tmpl&name=<URL编码歌名>&play_length=<URL编码时长>"` 的 `name=` 查询参数里 → 必须用 `urllib.parse.unquote` 解出（例 `%E7%88%B1%E4%B8%8A%E4%BB%A1%E5%B1%B1` →「爱上仡山」）；
+  - 歌手在 `author=` 属性（如 `author="道真公共文化"`），`singer_name` 多数为空；时长在 `play_length="241000"`（毫秒，/1000）。
+  健壮正则：`re.finditer(r'<(mpvoice|mp-common-mpaudio)\\b([^>]*)>', body)`，mediaid 取 `voice_encode_fileid`；歌名优先取 `src` 里 URL 编码的 `name=`，否则回退 `name=`/`title=`；歌手取 `author=`，否则 `singer_name=`；时长 `play_length`/1000。完整实战实现见 `/tmp/ingest_wx_e35.py`（道真仡佬篇）。
+
+桥接成 eXX track（与网易云同理，见 5.2）：`source:'Weixin'`、`source_cn:'微信公众号'`；音频 `_song.download_url='https://res.wx.qq.com/voice/getvoice?mediaid={voice_id}'`（**免鉴权永久直链**，实测 HTTP 200 audio/mp3 可播）、`_song.identifier=voice_id`(mediaid)；视频 `_song.download_url`=mpvideo 直链（**签名时效约 2 天**，过期由播放侧回源重取），视频 voice_id 空时用 `wxvid-{article_msgid}-{vid}` fallback 保唯一。**自愈线索**写 `_song.raw_data.wechat={'voice_id':voice_id,'url':article_url,'article':''}`（音频一般不用，视频必过期需它回文章页重抓 mpvideo）。歌手卡：`singers='卡片名'`、原歌手存 `singers_orig`、`artists_added` 登记；`album` 若被微信 HTML 的 `nickname:"data-miniprogram-nickname"` 污染则回退卡片名。
+
+双写纪律（同网易云）：**dev + live**（`~/Library/Application Support/MountainRiverEchoes/webui/ethnos_cache/eXX_族.json`）—— 运行中的 8766 app 读 live，网页验收前先确认落 live。
 
 ## 6. B 站收藏夹
 
