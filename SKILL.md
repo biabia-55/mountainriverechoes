@@ -205,6 +205,29 @@ songs = client.music_clients['NeteaseMusicClient'].search(
 - QQ 音乐 `/song?mid=xxx` 链接：入库后由 `_qqmusic_reissue_url` 按 mid 续签。
 - B 站单曲解析用 `BilibiliMusicClient()._parsewithofficialapiv1(...)`（参考 `import_bili_favlist.py` 的 `parse_one()`，每次 fresh 客户端规避单例损坏）。
 
+### 5.1 网易云歌单 id 提取（坑）
+- `musicdl` 的 `NeteaseMusicClient().parseplaylist(url)` 内部先 `session.head(url)`，会把 `music.163.com/#/playlist?id=XXXX` 的 **fragment 丢掉**，导致取不到 id、返回空列表。
+- 正确做法（自己取 id，别调 `parseplaylist`）：
+  ```python
+  from urllib.parse import urlparse, parse_qs
+  pid = parse_qs(urlparse(url).fragment).get('id', [None])[0]   # '7111745461'
+  resp = client.post('https://music.163.com/api/v6/playlist/detail', data={'id': pid})
+  track_ids = (resp.json()['playlist']['trackIds'])             # 逐首 _parsewithofficialapiv1 解析
+  ```
+- 逐首解析：`SongInfo(source='NeteaseMusicClient', raw_data={'search': tid, ...})` → `client._parsewithofficialapiv1(search_result=tid, lossless_quality_is_sufficient=False)`；`_parsewiththirdpartapis` 可省（官方直链够用）。
+
+### 5.2 在民族库内建"歌手卡片"（正确位置，别写进全局"我的歌单"）
+- ⚠️ 民族库**内部**的卡片 = **歌手卡片**，由该族缓存文件 `webui/ethnos_cache/eXX_族.json` 里每条曲目的 **`singers` 字段**扫描聚合而成（见 3 节）。它出现在「民族库二级页 → 歌手目录」，**不在**左侧全局"我的歌单"。
+- 全局"我的歌单"是 `ui_state.json` 的 `cm_my_playlists`，是独立于民族库的侧栏卡片——用户明确不要歌单落在这里，别用。
+- 用户说「在某某库新建《某某》歌手卡片，把这批歌放进去」→ 做法：
+  1. 这批歌先进主池（见 5 节 fetch+merge，带 `identifier`/`download_url` 可续签播放）；
+  2. 把这**批曲目的 `singers` 改为卡片名**（如 `'仡佬侗苗歌'`）——这就是建卡本身，索引按 `singers` 自动聚出该歌手卡片；
+  3. 同时把卡片名登记进该族缓存的 `artists_added`（确保可见），并从 `artists_removed` 解禁；
+  4. 点该卡片 → 虚拟歌单 `artist:卡片名@族名`，按 `singers` 过滤回池取曲，可整批播放。
+- 回滚保护：改 `singers` 前把原歌手名存到 **`singers_orig`** 字段（UI 不读，纯备份），要恢复真实歌手时回填即可。
+- 索引按文件 mtime 签名刷新（`_ethnos_files_sig`），改盘后刷新网页即生效，**无需重启服务**。
+- 精度提示：进主池会稀释目标族精度（例：侗苗歌单全量入仡佬族池，0 首真仡佬）。如要"只留卡片、清主池"，回滚时把主池里 `source=NeteaseMusicClient` 的这批整删即可。
+
 ## 6. B 站收藏夹
 
 ```bash
