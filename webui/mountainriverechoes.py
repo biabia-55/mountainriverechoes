@@ -103,10 +103,8 @@ QQ_CHARTS = [
     {'id': '4',  'kind': 'toplist', 'name': '流行指数榜', 'desc': '巅峰榜·流行指数', 'grad': ['#f7971e', '#fd9853']},
     {'id': '62', 'kind': 'toplist', 'name': '巅峰飙升榜', 'desc': '巅峰榜·飙升', 'grad': ['#7f00ff', '#e100ff']},
 ]
-# 汽水音乐精选歌单 (playlist_id 来自公开分享链接)
-SODA_PRESETS = [
-    {'id': '7573986162419908648', 'name': '安静曲', 'desc': '汽水精选·安静曲', 'grad': ['#43cea2', '#185a9d']},
-]
+# 汽水音乐精选歌单 (playlist_id 来自公开分享链接) —— 「安静曲」已于 2026-10-05 应用户要求移除
+SODA_PRESETS = []
 PRESET_PLAYLISTS = [
     {'platform': 'netease', 'platform_name': '网易云音乐', 'color': '#d33a31', 'items': NETEASE_CHARTS},
     {'platform': 'qq', 'platform_name': 'QQ音乐', 'color': '#31c27c', 'items': QQ_CHARTS},

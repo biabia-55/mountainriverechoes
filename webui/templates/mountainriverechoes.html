@@ -2952,7 +2952,9 @@ async function initDiscover(){
 }
 async function loadChartPreview(chart){
   const el = $(`#chart-${chart.id}`);
-  el.querySelector('.ct-items').innerHTML = `<div class="chart-item"><span class="spin"></span>加载中...</div>`;
+  /* 旧榜单先顶着(stale-while-revalidate): 已有上一轮内容时不再清成转圈, 新数据到达后原地替换 ——
+     否则每次进发现页都闪"加载中", 观感就是"实时更新很慢"(实际抓取仅 0.3~0.5s) */
+  if (!chart._detail) el.querySelector('.ct-items').innerHTML = `<div class="chart-item"><span class="spin"></span>加载中...</div>`;
   try {
     const d = await getPlaylistDetail(chart.id, 'netease', { refresh: true });
     chart._detail = d;
@@ -2963,9 +2965,14 @@ async function loadChartPreview(chart){
   } catch(err){ el.querySelector('.ct-items').innerHTML = `<div class="chart-item" style="color:var(--txt3)">榜单加载失败</div>`; }
 }
 function renderChartCards(){
+  /* 上一轮榜单先渲染(stale-while-revalidate): 重进发现页不再闪转圈, loadChartPreview 拉到新数据后原地替换 */
+  const prevItems = c => (c._detail && (c._detail.tracks || []).length)
+    ? c._detail.tracks.slice(0, 5).map((t, i) => `<div class="chart-item" data-id="${c.id}" data-i="${i}"><span class="rk">${i + 1}</span><span class="nm">${esc(t.name)}</span><span class="sg">${esc(t.artist)}</span></div>`).join('')
+    : `<div class="chart-item"><span class="spin"></span></div>`;
   $('#chart-row').innerHTML = (state.chartsList || []).slice(0, 3).map(c => `<div class="chart-card" id="chart-${c.id}" data-id="${c.id}">
-    <h3>${esc(c.name)} <span class="upd">...</span></h3><div class="ct-items"><div class="chart-item"><span class="spin"></span></div></div></div>`).join('');
+    <h3>${esc(c.name)} <span class="upd">${c._detail ? c._detail.count + '首' : '...'}</span></h3><div class="ct-items">${prevItems(c)}</div></div>`).join('');
   $$('#chart-row .chart-card').forEach(el => el.onclick = () => nav('playlist', { id: el.dataset.id, name: (state.chartsList.find(c => c.id === el.dataset.id) || {}).name }));
+  $$('#chart-row .chart-item[data-i]').forEach(it => it.onclick = e => { e.stopPropagation(); const det = state.chartsList.find(c => c.id === it.dataset.id); if (!det || !det._detail) return; const t = det._detail.tracks[+it.dataset.i]; playTrack({ name: t.name, artist: t.artist, album: t.album, cover: t.cover, duration: fmtTime((t.duration_ms || 0) / 1000) }, { list: det._detail.tracks.map(x => ({ name: x.name, artist: x.artist, album: x.album, cover: x.cover, duration: fmtTime((x.duration_ms || 0) / 1000) })) }); });
 }
 function renderPlGrid(){
   /* 汇总三个平台的预置歌单卡片 */
@@ -3035,7 +3042,7 @@ async function renderPlaylistPage(name){
   $('#pld-platform').textContent = '歌单 · ' + (d.platform_name || '网易云');
   let tracks = d.tracks.map(t => t.song_name
     ? { song_name: t.song_name, singers: t.singers, album: t.album, duration: t.duration || fmtTime((t.duration_ms || 0) / 1000), cover_url: t.cover_url || t.cover, sid: t.sid, id: t.id, source: t.source || 'Netease', source_cn: t.source_cn || state.srcNames[t.source] || '网易云', ext: t.ext, _versions: t._versions, ms: t.ms }
-    : { song_name: t.name, singers: t.artist, album: t.album, duration: fmtTime((t.duration_ms || 0) / 1000), cover_url: t.cover, sid: t.sid, id: t.id, source: t.sid ? 'Playlist' : 'Netease', source_cn: t.sid ? '歌单解析' : '网易云', ms: t.ms });
+    : { song_name: t.name, singers: t.artist, album: t.album, duration: fmtTime((t.duration_ms || 0) / 1000), cover_url: t.cover, sid: t.sid, id: t.id, source: t.sid ? 'Playlist' : (d.platform || 'netease'), source_cn: t.sid ? '歌单解析' : (d.platform_name || state.srcNames[d.platform] || '网易云'), ms: t.ms });
   let visible = tracks.filter(t => !removed.includes(trackKeyOf(t)));
   /* 民族库详情页: 置顶/拖动次序(服务端单一事实来源), 置顶段在前 */
   const ethGroup = (d.platform === 'ethnos' && (d.id || d.key || d.group)) ? String(d.id || d.key || d.group) : null;
@@ -3204,7 +3211,7 @@ function buildPlCtx(){
   const removed = (state.plRemoved[plKey] || []);
   const tracks = d.tracks.map(t => t.song_name
     ? { song_name: t.song_name, singers: t.singers, album: t.album, duration: t.duration || fmtTime((t.duration_ms || 0) / 1000), cover_url: t.cover_url || t.cover, sid: t.sid, id: t.id, source: t.source || 'Netease', source_cn: t.source_cn || state.srcNames[t.source] || '网易云', ext: t.ext, _versions: t._versions, ms: t.ms }
-    : { song_name: t.name, singers: t.artist, album: t.album, duration: fmtTime((t.duration_ms || 0) / 1000), cover_url: t.cover, sid: t.sid, id: t.id, source: t.sid ? 'Playlist' : 'Netease', source_cn: t.sid ? '歌单解析' : '网易云', ms: t.ms });
+    : { song_name: t.name, singers: t.artist, album: t.album, duration: fmtTime((t.duration_ms || 0) / 1000), cover_url: t.cover, sid: t.sid, id: t.id, source: t.sid ? 'Playlist' : (d.platform || 'netease'), source_cn: t.sid ? '歌单解析' : (d.platform_name || state.srcNames[d.platform] || '网易云'), ms: t.ms });
   const items = tracks.filter(t => !removed.includes(trackKeyOf(t)));
   return { items, sid: d.sid, removable: true, plKey: isMy ? undefined : plKey, myId: isMy ? d.id : undefined };
 }
