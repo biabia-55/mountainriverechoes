@@ -708,9 +708,24 @@ def _atomic_write_json(path, payload):
         if isinstance(o, str): return ''.join(c for c in o if not (0xD800 <= ord(c) <= 0xDFFF) and (ord(c) >= 32 or c in '\n\t'))
         return o
     tmp = path.with_suffix(path.suffix + '.tmp')
-    tmp.write_text(json.dumps(_clean(payload), ensure_ascii=False), encoding='utf-8')
+    tmp.write_text(json.dumps(_clean(payload), ensure_ascii=False, separators=(',', ':')), encoding='utf-8')
     tmp.replace(path)
 
+
+_SONG_SLIM_DROP = ('download_url_status', 'downloaded_contents', '_save_path', 'work_dir',
+                   'chunk_size', 'default_download_headers', 'default_download_cookies')
+_RAW_DATA_KEEP_SOURCES = {'BilibiliMusicClient', 'WeixinMusicClient', 'Bilibili', 'Weixin'}   # 自愈需从 raw_data 找 BV号/文章voice_id(含裸标签)
+
+def _slim_song(sd):
+    """落盘前裁剪 _song 冗余字段(2026-10-05 瘦身): download_url_status/原始下载参数等运行时不再读取,
+    raw_data 仅保留 B站/微信(自愈链依赖), 其余源删除 —— 库文件体积 -25% 左右, 行为不变。"""
+    if not isinstance(sd, dict):
+        return sd
+    if sd.get('source') not in _RAW_DATA_KEEP_SOURCES:
+        sd.pop('raw_data', None)
+    for k in _SONG_SLIM_DROP:
+        sd.pop(k, None)
+    return sd
 
 def _ethnos_payload(info, group_key, songs, partial=False):
     tracks_payload = []
@@ -725,7 +740,7 @@ def _ethnos_payload(info, group_key, songs, partial=False):
         brief['source_cn'] = SOURCE_NAMES.get(real, real) if real else '民族音乐'
         if not brief['duration'] or ':' not in brief['duration']:
             brief['duration'] = ''
-        tracks_payload.append(dict(brief, _song=s.todict()))
+        tracks_payload.append(dict(brief, _song=_slim_song(s.todict())))
     return {
         'v': ETHNOS_SCHEMA, 'partial': partial, 'name': f"{info['name']} · 民族音乐",
         'group': info['name'], 'key': group_key,
@@ -2841,7 +2856,7 @@ def _han_payload(songs, partial=False):
             real = '光音·微信'
         brief['source'] = real or 'Han'
         brief['source_cn'] = SOURCE_NAMES.get(real, real) if real else '民间小调'
-        tracks_payload.append(dict(brief, _song=s.todict()))
+        tracks_payload.append(dict(brief, _song=_slim_song(s.todict())))
     return {'v': ETHNOS_SCHEMA, 'partial': partial, 'name': '汉族民间小调', 'group': '汉族民间小调',
             'key': 'han', 'cover': (songs[0].cover_url if songs and songs[0].cover_url else ''),
             'count': len(songs), 'built_at': time.time(), 'kws': HAN_FOLK_KWS, 'sources': [], 'tracks': tracks_payload}
