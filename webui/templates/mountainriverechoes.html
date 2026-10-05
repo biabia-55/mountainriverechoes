@@ -660,7 +660,7 @@ tr:hover .td-act{opacity:1}
       <div class="nav-item nav-indexhl" data-page="index"><svg class="ic" style="color:#e0392f"><use href="#i-disc"/></svg><span class="grow" style="font-weight:600">音乐库索引</span></div>
       <div class="nav-item nav-ethnos" data-page="ethnos"><svg class="ic" style="color:#b8860b"><use href="#i-note"/></svg><span class="grow" style="color:#b8860b;font-weight:600">民族音乐歌单</span></div>
       <div class="nav-item" data-page="discover"><svg class="ic" style="color:#3b82f6"><use href="#i-discover"/></svg><span class="grow">发现音乐</span></div>
-      <div class="nav-item" data-page="fm"><svg class="ic" style="color:#8b5cf6"><use href="#i-fm"/></svg><span class="grow">私人FM</span><span class="badge" id="fm-badge" style="display:none">ON</span></div>
+      <div class="nav-item" data-page="fm"><svg class="ic" style="color:#8b5cf6"><use href="#i-fm"/></svg><span class="grow">私人FM</span></div>
       <div class="nav-title">我的音乐</div>
       <div class="nav-item" data-page="history"><svg class="ic" style="color:#14b8a6"><use href="#i-clock"/></svg><span class="grow">最近播放</span></div>
       <div class="nav-item" data-page="downloads"><svg class="ic" style="color:#22c55e"><use href="#i-download"/></svg><span class="grow">下载管理</span></div>
@@ -3415,7 +3415,6 @@ async function fmStart(){
     if (!state.fm.pool.length) { $('#fm-tip').textContent = '最近播放为空，且榜单曲库加载失败，请稍后再试'; return; }
   }
   state.fm.on = true; state.fm.played = new Set();
-  $('#fm-badge').style.display = '';
   $('#fm-next').style.display = ''; $('#fm-ban').style.display = '';
   $('#fm-tip').textContent = hist.length ? '按「最近播放」随机推荐 · 播放结束自动切歌' : '最近播放为空，暂按热歌榜/新歌榜随机推荐 · 播放结束自动切歌';
   fmNext();
@@ -3444,7 +3443,6 @@ function fmNext(){
 }
 function renderFM(){
   const on = state.fm.on;
-  $('#fm-badge').style.display = on ? '' : 'none';
   $('#fm-next').style.display = on ? '' : 'none';
   $('#fm-ban').style.display = on ? '' : 'none';
   if (on && !audio.paused) $('#fm-disc').classList.add('rot'); else $('#fm-disc').classList.remove('rot');
