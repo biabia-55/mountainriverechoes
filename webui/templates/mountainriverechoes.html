@@ -2934,7 +2934,7 @@ function renderSongResults(err){
 }
 
 /* ================================================================ 发现音乐 / 榜单 / 歌单 */
-const HOT_WORDS = ['周杰伦', '林俊杰', '陈奕迅', '邓紫棋', '薛之谦', '告五人', '五月天', 'Taylor Swift', '毛不易', 'BLACKPINK'];
+const HOT_WORDS = ['刘欢', '郭兰英', '周杰伦', '陈奕迅', '告五人', 'Taylor Swift', '毛不易', '容祖儿', 'Radiohead', '刘德华'];
 async function initDiscover(){
   $('#hot-words').innerHTML = HOT_WORDS.map(w => `<span>${esc(w)}</span>`).join('');
   $$('#hot-words span').forEach(s => s.onclick = () => { $('#search-input').value = s.textContent; doSearch(s.textContent); });
