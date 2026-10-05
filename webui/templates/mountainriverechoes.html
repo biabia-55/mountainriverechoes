@@ -454,9 +454,8 @@ tr:hover .td-act{opacity:1}
 .move-menu .mm-i span{color:var(--txt3);font-size:11px}
 .move-menu .mm-empty{color:var(--txt3);font-size:12px;padding:8px 9px}
 .eth-row.is-pinned{background:#fffdf4}
-/* 置顶标记: 钉在头像右上角。原来只有 margin 负值、没有 top/left, 而 .av 又是 static,
-   于是这个绝对定位的伪元素实际落在整行左外侧 20px 处(基本看不见) —— 定位锚点补上后才真正显示 */
-.eth-row.is-pinned .av::after{content:'📌';position:absolute;top:-3px;right:-3px;margin:0;font-size:11px;line-height:1}
+/* 置顶角标已移除(2026-10-05): 歌手顺序固化为用户自定义版后, 📌 角标成为冗余信息;
+   置顶的排序行为与悬停"置顶/取消置顶"按钮保留, 仅不再显示头像右上角的 📌 */
 .nav-item .pl-del{display:none;border:none;background:transparent;color:var(--txt3);padding:2px 4px;cursor:pointer;border-radius:5px}
 .nav-item:hover .pl-del{display:inline-flex}
 .nav-item .pl-del:hover{color:var(--red);background:#fdeeee}
