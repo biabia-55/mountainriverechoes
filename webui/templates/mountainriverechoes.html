@@ -3408,16 +3408,27 @@ async function fmEnsurePool(){
   state.fm.pool = pools.flat();
 }
 async function fmStart(){
-  $('#fm-tip').textContent = '正在准备FM曲库...';
-  await fmEnsurePool();
-  if (!state.fm.pool.length) { $('#fm-tip').textContent = '曲库加载失败，请稍后再试'; return; }
+  const hist = (state.history || []).filter(t => t && t.name);
+  if (!hist.length) {
+    $('#fm-tip').textContent = '正在准备FM曲库...';
+    await fmEnsurePool();
+    if (!state.fm.pool.length) { $('#fm-tip').textContent = '最近播放为空，且榜单曲库加载失败，请稍后再试'; return; }
+  }
   state.fm.on = true; state.fm.played = new Set();
   $('#fm-badge').style.display = '';
   $('#fm-next').style.display = ''; $('#fm-ban').style.display = '';
-  $('#fm-tip').textContent = '根据热歌榜/新歌榜随机推荐 · 播放结束自动切歌';
+  $('#fm-tip').textContent = hist.length ? '按「最近播放」随机推荐 · 播放结束自动切歌' : '最近播放为空，暂按热歌榜/新歌榜随机推荐 · 播放结束自动切歌';
   fmNext();
 }
 function fmPick(){
+  /* 推荐池 = 「最近播放」(每次实时读取, FM 里播过的歌自然入池形成正反馈);
+     全部播过一轮后重洗; 历史为空时回退榜单池(旧逻辑) */
+  const histAll = (state.history || []).filter(t => t && t.name);
+  if (histAll.length) {
+    let cand = histAll.filter(t => !state.fm.played.has(t.name));
+    if (!cand.length) { state.fm.played = new Set(); cand = histAll; }
+    return cand[Math.floor(Math.random() * cand.length)];
+  }
   const pool = state.fm.pool.filter(t => !state.fm.played.has(t.name));
   const arr = pool.length ? pool : state.fm.pool;
   return arr[Math.floor(Math.random() * arr.length)];
@@ -3425,7 +3436,7 @@ function fmPick(){
 function fmNext(){
   const t = fmPick(); if (!t) return;
   state.fm.played.add(t.name);
-  state.queue = [{ name: t.name, artist: t.artist, album: t.album, cover: t.cover, duration: fmtTime((t.duration_ms || 0) / 1000) }];
+  state.queue = [{ name: t.name, artist: t.artist, album: t.album, cover: t.cover, duration: t.duration_ms ? fmtTime((t.duration_ms || 0) / 1000) : (t.duration || '') }];
   state.qidx = 0; state.fm.on = true;
   loadCurrent();
   renderFM();
