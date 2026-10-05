@@ -2331,7 +2331,14 @@ function renderEthnos(){
     const hanCard = `<div class="pl-card eth-card" data-k="han" data-nm="汉族" title="点击进入">
       <div class="cov" style="background:linear-gradient(135deg,#8f5e0d,#c9962c)">汉族<span class="play-cov"><svg class="ic fill"><use href="#i-play"/></svg></span></div>
       <div class="nm"><span>汉族音乐</span><span class="ct">${hanCnt ? hanCnt + ' 首' : '点击构建'}</span></div></div>`;
-    grid.innerHTML = groups.map(ethCardHTML).join('') + hanCard || '<div class="empty">加载中...</div>';
+    /* 卡片次序与索引页同步(2026-10-05): 直接采用 cm_order_ethcards(用户自定义, 与「音乐库索引」同一份单一事实来源),
+       未列入的民族按代码默认序殿后; 汉族卡在序表中的键名是「汉族民间小调」 */
+    const ethOrder = store.get('cm_order_ethcards', ETHCARD_ORDER_DEFAULT) || [];
+    const eIdx = new Map(ethOrder.map((n, i) => [n, i]));
+    const cardKeyOf = nm => (nm === '汉族' ? '汉族民间小调' : nm);
+    const zoneCards = [...groups.map(g => ({ nm: g.name, html: ethCardHTML(g) })), { nm: '汉族民间小调', html: hanCard }]
+      .sort((a, b) => ((eIdx.get(cardKeyOf(a.nm)) ?? 1e9) - (eIdx.get(cardKeyOf(b.nm)) ?? 1e9)));
+    grid.innerHTML = zoneCards.map(c => c.html).join('') || '<div class="empty">加载中...</div>';
     const hc = grid.querySelector('.eth-card[data-k="han"]');
     if (hc) hc.onclick = () => nav('playlist', { id: 'han', platform: 'ethnos', name: '汉族 · 民族音乐' });
   }
@@ -3047,10 +3054,26 @@ async function renderPlaylistPage(name){
     const pIdx = new Map([...pinSet].map((k, i) => [k, i]));
     const oIdx = new Map((cc.trackOrder || []).map((k, i) => [k, i]));
     const dIdx = new Map(visible.map((t, i) => [tKey(t), i]));
-    if (pinSet.size || oIdx.size) visible = visible.slice().sort((a, b) => {
+    /* 歌曲默认排序与索引歌手目录同步(2026-10-05): 未被曲目级置顶/拖动覆盖的歌,
+       按「该歌手在索引二级列表中的档位」分档(置顶 > 服务端序 > 拖动序 > 默认名册序),
+       同档内保持库内原始前后; 合作曲取所有歌手中最靠前的档位 */
+    const gname = ethGroup === 'han' ? '汉族民间小调' : (((state.ethnos.groups || []).find(g => g.key === ethGroup) || {}).name);
+    let sRank = new Map();
+    if (gname) {
+      const cc2 = (state.ethCustom[gname] = state.ethCustom[gname] || {});
+      const roster = ((((state.index.data || {}).artists) || [])).filter(a => a.group === gname).map(a => a.name);
+      sRank = new Map([...new Set([...(cc2.pinned || []), ...(cc2.order || []), ...(store.get('cm_order_ethrows_' + gname, []) || []), ...roster])].map((n, i) => [n, i]));
+    }
+    const rankOf = t => {
+      const parts = String(t.singers || '').split(/[\/,,、&+]/).map(x => x.trim()).filter(Boolean);
+      let best = 100000;
+      for (const p of parts) { const r = sRank.get(p); if (r != null && r < best) best = r; }
+      return best;
+    };
+    visible = visible.slice().sort((a, b) => {
       const ka = tKey(a), kb = tKey(b);
-      const va = pIdx.has(ka) ? pIdx.get(ka) : (oIdx.has(ka) ? 100000 + oIdx.get(ka) : 200000 + (dIdx.get(ka) || 0));
-      const vb = pIdx.has(kb) ? pIdx.get(kb) : (oIdx.has(kb) ? 100000 + oIdx.get(kb) : 200000 + (dIdx.get(kb) || 0));
+      const va = pIdx.has(ka) ? pIdx.get(ka) : (oIdx.has(ka) ? 100000 + oIdx.get(ka) : 200000 + rankOf(a) * 10000 + Math.min(dIdx.get(ka) || 0, 9999));
+      const vb = pIdx.has(kb) ? pIdx.get(kb) : (oIdx.has(kb) ? 100000 + oIdx.get(kb) : 200000 + rankOf(b) * 10000 + Math.min(dIdx.get(kb) || 0, 9999));
       return va - vb;
     });
   }
